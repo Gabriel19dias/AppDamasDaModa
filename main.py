@@ -3,6 +3,9 @@ import requests
 import pandas as pd  # Importação do pandas para manipular e exibir tabelas
 import streamlit as st
 import streamlit.components.v1 as components
+import io
+import openpyxl
+
 # Firebase URL (sem esquecer do .json)
 FIREBASE_URL = "https://appvendas-41654-default-rtdb.firebaseio.com"
 # Função para adicionar fundo colorido
@@ -297,7 +300,6 @@ elif opcao == "Dashboard":
 
     st.caption("📊 Dashboard atualizado em tempo real com dados do Firebase")
 
-
 elif opcao == "Ver Tabela":
     # Função para buscar dados do Firebase e exibi-los em uma tabela
     def buscar_firebase(categoria):
@@ -307,8 +309,8 @@ elif opcao == "Ver Tabela":
             if resposta.status_code == 200:
                 dados = resposta.json()
                 if dados:
-                    # Convertendo os dados para um DataFrame do pandas para facilitar a exibição
                     df = pd.DataFrame.from_dict(dados, orient='index')
+                    df['firebase_id'] = df.index  # Coloca a chave como uma coluna
                     return df
                 else:
                     st.info(f"Nenhum registro encontrado em {categoria}.")
@@ -318,15 +320,66 @@ elif opcao == "Ver Tabela":
             st.error(f"Erro de conexão: {e}")
         return pd.DataFrame()  # Retorna um DataFrame vazio se houver erro
 
-    # Exibindo a tabela no Streamlit
-    st.title("🔎 Exibir Tabela de Registros do Firebase")
+    # Função para apagar registro do Firebase
+    def apagar_firebase(categoria, firebase_id):
+        url = f"{FIREBASE_URL}/{categoria}/{firebase_id}.json"
+        try:
+            resposta = requests.delete(url)
+            if resposta.status_code == 200:
+                st.success("🗑️ Registro apagado com sucesso!")
+            else:
+                st.error(f"Erro ao apagar registro! Código {resposta.status_code}: {resposta.text}")
+        except Exception as e:
+            st.error(f"Erro de conexão: {e}")
+
+    st.title("🔎 Exibir e Gerenciar Registros do Firebase")
     categoria = st.selectbox("Escolha a categoria para exibir", ["clientes", "roupas", "vendas"])
 
-    # Buscar dados do Firebase e exibir na tabela
     dados_df = buscar_firebase(categoria)
 
-    # Se houver dados, exibe a tabela
     if not dados_df.empty:
-        st.dataframe(dados_df)  # Exibe a tabela com os dados
+        # Adicionando o índice visível na tabela
+        dados_df_reset = dados_df.reset_index()  # Resetando o índice para torná-lo uma coluna visível
+        dados_df_reset = dados_df_reset.rename(columns={'index': 'Índice'})  # Renomeando a coluna de índice
+
+        # Exibindo a tabela com o índice visível
+        st.dataframe(dados_df_reset.sort_index(axis=1))  # Exibe ordenando as colunas
+
+        linha_selecionada = st.number_input("Digite o número da linha que deseja apagar", min_value=0, max_value=len(dados_df)-1, step=1)
+
+        if st.button("🗑️ Apagar Linha Selecionada"):
+            try:
+                firebase_id = dados_df.iloc[linha_selecionada]['firebase_id']
+                apagar_firebase(categoria, firebase_id)
+                st.experimental_rerun()  # Atualiza a página para refletir a exclusão
+            except Exception as e:
+                st.error(f"Erro ao tentar apagar: {e}")
+
+        # Botão para exportar para Excel
+        st.markdown("---")
+        if st.button("📥 Exportar Tabela para Excel"):
+    # Removendo a coluna 'firebase_id'
+            excel_data = dados_df.drop(columns=['firebase_id'])
+
+            # Criando um buffer em memória para armazenar o arquivo Excel
+            buffer = io.BytesIO()
+
+            # Exportando os dados para o buffer usando openpyxl como engine
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                excel_data.to_excel(writer, index=False, sheet_name="Dados Exportados")
+            
+            # Rewind do buffer para leitura após a escrita
+            buffer.seek(0)
+
+            # Nome do arquivo de exportação, por exemplo, com base na categoria
+            categoria = 'Categoria_Exemplo'  # Ajuste isso conforme necessário
+
+            # Exibindo o botão de download
+            st.download_button(
+                label="Clique para baixar",
+                data=buffer,
+                file_name=f"{categoria}_export.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
     else:
         st.info(f"Nenhum dado encontrado em {categoria}.")
